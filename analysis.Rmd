@@ -1,0 +1,245 @@
+---
+title: "FCM Data Analysis - Biodiversity within phytoplankton-associated microbiomes"
+author: "Ruben Props"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Libraries
+
+```{r setup, include = FALSE, warning = FALSE}
+knitr::opts_chunk$set(eval = TRUE, 
+                      echo = TRUE, 
+                      cache = TRUE,
+                      include = TRUE,
+                      collapse = FALSE,
+                      dependson = NULL,
+                      engine = "R", # Chunks will always have R code, unless noted
+                      error = TRUE,
+                      fig.path="Figures-FCM-SARA/cached/",  # Set the figure options
+                      fig.align = "center",
+                      cache.lazy = FALSE)
+# Load libraries
+library("ggcyto")
+library("reshape2")
+library("ggplot2")
+library("gridExtra")
+library("Phenoflow")
+library("tidyr")
+library("dplyr")
+library("cowplot")
+library('grid')
+```
+
+# Phenotypic diversity analysis
+
+## Preprocessing
+
+```{r}
+# import data
+# fs  <- FCS_preprocess(path = "./nikki_samples/batch_2/", pattern = ".fcs", alter.names = TRUE)
+fs <- read.flowSet(path = "./data/batch_2/", pattern=".fcs", alter.names = TRUE)
+
+# retrieve and alter sample names
+pData(fs)$well <- gsub(".*_(.*)_.*.fcs","\\1",sampleNames(fs)) # extract well from name and add new 'well' column
+pData(fs) # check successful
+
+### Extract metadata from sample names
+metadata <- data.frame(sampleNames(fs), do.call(rbind, lapply(strsplit(flowCore::sampleNames(fs),"_"), rbind)))
+colnames(metadata) <- c("Sample_names","Sample Replicate", "Run Replicate", "Sample", "ID within run")
+
+# Find non-experimental samples
+ind <- as.data.frame(pData(fs))
+ind <- cbind(ind, seq(1, length(metadata$Sample), 1))
+colnames(ind) <- c("File", "Sample", "Unique")
+not.samples <- as.vector(c(1:5, 54:61, 90:92))
+
+## Make a filtered metadata
+metadata2 <- metadata %>%
+  slice(-not.samples)
+
+# Do same for FCS data as for metadata
+sfs <- fs[-not.samples]
+```
+
+## Transform data
+
+```{r}
+# Select phenotypic features of interest and transform parameters
+sfs <- transform(
+  sfs,
+  `FITC.A` = asinh(`FITC.A`),
+  `FITC.H` = asinh(`FITC.H`),
+  `PerCP.Cy5.5.A` = asinh(`PerCP.Cy5.5.A`),
+  `PerCP.Cy5.5.H` = asinh(`PerCP.Cy5.5.H`),
+  `SSC.H` = asinh(`SSC.H`),
+  `FSC.H` = asinh(`FSC.H`),
+  `SSC.A` = asinh(`SSC.A`),
+  `FSC.A` = asinh(`FSC.A`),
+  `Pacific.Blue.A` = asinh(`Pacific.Blue.A`)
+)
+```
+
+## Define gates
+
+```{r}
+# Bead removal
+sqrcut1 <- matrix(c(7.75, 7.75, 11, 11, 9.5, 9.5,
+                    10, 12, 14, 12, 11, 10),
+                  ncol = 2,
+                  nrow = 6)
+#                     top right, bottom right, bottom middle
+colnames(sqrcut1) <- c("FITC.A", "Pacific.Blue.A")
+polyGate_bead <- polygonGate(.gate = sqrcut1, filterId = "Beads")
+
+
+# Fluorescence denoising to retain bacterial signature only
+sqrcut1 <- matrix(c(5, 5, 6.8, 8, 10, 11, 13.5, 15, 15, 
+                   2, 4.8, 5.7, 6.75, 8.5, 9.5, 12, 12, 2),
+                  ncol = 2,
+                  nrow = 9)
+#                     top right, bottom right, bottom middle
+colnames(sqrcut1) <- c("FITC.A", "PerCP.Cy5.5.A")
+polyGate_FL <- polygonGate(.gate = sqrcut1, filterId = "Beads")
+```
+
+## Denoising
+
+```{r}
+# Split flowset
+sfs_no_beads <- split(sfs, polyGate_bead)
+sfs_no_beads_bacteria <- Subset(sfs_no_beads$`Beads-`, polyGate_FL)
+
+# Check end result of filtering
+## Bead gating
+p_scatter1 <-
+  ggcyto::ggcyto(sfs_no_beads$`Beads+`[sample(1:length(sfs_no_beads$`Beads+`), 6)],
+                 aes(x = `FITC.A`, y = `Pacific.Blue.A`)) +
+  geom_hex(bins = 300) +
+  theme_bw() +
+  labs(x = "FITC-A", y = "PerCP-Cy5-5-A") +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    strip.background = element_rect(colour = "white", fill = "white"),
+    panel.border = element_rect(colour = "white")
+  )+
+  coord_cartesian(xlim = c(5, 15), ylim = c(2, 15))+
+  geom_gate(polyGate_bead) 
+
+p_scatter1
+
+## Removed bead events
+p_scatter2 <-
+  ggcyto::ggcyto(sfs_no_beads$`Beads-`[sample(1:length(sfs_no_beads$`Beads-`), 6)],
+                 aes(x = `FITC.A`, y = `PerCP.Cy5.5.A`)) +
+  geom_hex(bins = 300) +
+  theme_bw() +
+  labs(x = "FITC-A", y = "PerCP-Cy5-5-A") +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    strip.background = element_rect(colour = "white", fill = "white"),
+    panel.border = element_rect(colour = "white")
+  )+
+  coord_cartesian(xlim = c(5, 15), ylim = c(2, 15))+
+  geom_gate(polyGate_FL) 
+
+p_scatter2
+
+## Finam bacterial community signature
+p_scatter3 <-
+  ggcyto::ggcyto(sfs_no_beads_bacteria[sample(1:length(sfs_no_beads_bacteria), 6)],
+                 aes(x = `FITC.A`, y = `PerCP.Cy5.5.A`)) +
+  geom_hex(bins = 300) +
+  theme_bw() +
+  labs(x = "FITC-A", y = "PerCP-Cy5-5-A") +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    strip.background = element_rect(colour = "white", fill = "white"),
+    panel.border = element_rect(colour = "white")
+  )+
+  coord_cartesian(xlim = c(5, 15), ylim = c(2, 15))+
+  geom_gate(polyGate_FL) 
+
+p_scatter3
+
+```
+
+## Normalize data
+
+```{r}
+summary <- fsApply(x = sfs_no_beads_bacteria, FUN = function(x) apply(x, 2, max), use.exprs = TRUE)
+maxval <- max(summary[,"FITC.H"]) #Replace with the column representing the green fluorescence channel (e.g. "FITC-H")
+mytrans <- function(x) x/maxval
+flowData_transformed <-
+  transform(
+    sfs_no_beads_bacteria,
+    `FITC.H` = mytrans(`FITC.H`),
+    `PerCP.Cy5.5.H` = mytrans(`PerCP.Cy5.5.H`),
+    `FSC.H` = mytrans(`FSC.H`),
+    `SSC.H` = mytrans(`SSC.H`
+    ))
+```
+
+## Bootstrap diversity calculations
+
+```{r}
+# Estimate diversity
+df_diversity_rf <-
+  Diversity_rf(
+    flowData_transformed,
+    param = c("FSC.H", "SSC.H", "FITC.H", "PerCP.Cy5.5.H"),
+    R = 10,
+    R.b = 10,
+    cleanFCS = FALSE
+  )
+
+colnames(df_diversity_rf) <- paste0("resampled_", colnames(df_diversity_rf))
+
+# Merge with metadata
+exp_metadata <- read.csv("./data/metadata_expeirment.csv")
+exp_metadata$Sample <- as.character(exp_metadata$Sample)
+
+df_diversity_meta <-
+  left_join(df_diversity_rf, metadata2, by = c("resampled_Sample_names" = "Sample_names")) %>%
+  mutate(Sample = gsub("s|S|NB", "", Sample)) %>%
+  left_join(exp_metadata, by = "Sample")
+
+# Format labels
+df_diversity_meta <- df_diversity_meta %>% 
+  mutate(x_label = interaction(Nutrient_Treatment, Temperature_Treatment, sep = "-"))
+
+# Get bacterial cell counts
+df_counts <-
+  data.frame(
+    Sample_names = sampleNames(sfs_no_beads_bacteria),
+    bacterial_counts = fsApply(
+      sfs_no_beads_bacteria,
+      FUN = function(x)
+        nrow(x)
+    ),
+    bead_counts = fsApply(
+      sfs_no_beads$`Beads+`,
+      FUN = function(x)
+        nrow(x)
+    )
+  )
+df_counts$dilution_factor = 1E1L # was fixed
+
+# Add bacterial/bead counts to results
+df_diversity_meta <- df_diversity_meta %>% 
+  left_join(., df_counts, by = c("resampled_Sample_names" = "Sample_names"))
+
+# Export data
+write.csv(
+  df_diversity_meta,
+  file = paste0("./data/", Sys.Date(), "-results.csv"),
+  quote = FALSE,
+  row.names = FALSE
+)
+```
+
