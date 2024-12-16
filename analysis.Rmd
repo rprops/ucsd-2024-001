@@ -149,7 +149,7 @@ p_scatter2 <-
 
 p_scatter2
 
-## Finam bacterial community signature
+## Final bacterial community signature
 p_scatter3 <-
   ggcyto::ggcyto(sfs_no_beads_bacteria[sample(1:length(sfs_no_beads_bacteria), 6)],
                  aes(x = `FITC.A`, y = `PerCP.Cy5.5.A`)) +
@@ -168,6 +168,30 @@ p_scatter3 <-
 p_scatter3
 
 ```
+
+```{r}
+# Aggregate check
+
+## Final bacterial community signature
+p_scatter4 <-
+  ggcyto::ggcyto(sfs_no_beads_bacteria[sample(1:length(sfs_no_beads_bacteria), 6)],
+                 aes(x = `FITC.A`, y = `FITC.H`)) +
+  geom_hex(bins = 300) +
+  theme_bw() +
+  labs(x = "FITC-A", y = "FITC-H") +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    strip.background = element_rect(colour = "white", fill = "white"),
+    panel.border = element_rect(colour = "white")
+  )+
+  coord_cartesian(xlim = c(5, 15), ylim = c(2, 15))
+  # geom_gate(polyGate_FL) 
+
+p_scatter4
+
+```
+
 
 ## Normalize data
 
